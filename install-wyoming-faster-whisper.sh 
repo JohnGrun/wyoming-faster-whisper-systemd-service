@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="/opt/wyoming-faster-whisper"
+SERVICE_FILE="/etc/systemd/system/wyoming-faster-whisper.service"
+USER="wyoming"
+GROUP="wyoming"
+
+echo "==> Ensuring wyoming system user exists..."
+if ! id -u "$USER" >/dev/null 2>&1; then
+  useradd --system --no-create-home --shell /usr/sbin/nologin "$USER"
+fi
+
+echo "==> Creating app directory at $APP_DIR..."
+mkdir -p "$APP_DIR"
+cd "$APP_DIR"
+
+echo "==> Creating virtual environment..."
+if [ ! -d venv ]; then
+  python3 -m venv venv
+fi
+
+if [ ! -x venv/bin/pip ]; then
+  echo "❌ ERROR: venv did not create pip. Exiting."
+  exit 1
+fi
+
+echo '==> Upgrading pip and installing wyoming-faster-whisper...'
+venv/bin/pip install --upgrade pip
+venv/bin/pip install wyoming-faster-whisper
+
+echo "==> Setting permissions..."
+chown -R "$USER:$GROUP" "$APP_DIR"
+
+echo "==> Creating systemd service at $SERVICE_FILE..."
+cat > "$SERVICE_FILE" <<'EOF'
+[Unit]
+Description=Wyoming Faster Whisper ASR Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wyoming
+Group=wyoming
+WorkingDirectory=/opt/wyoming-faster-whisper
+Environment="PATH=/opt/wyoming-faster-whisper/venv/bin"
+ExecStart=/opt/wyoming-faster-whisper/venv/bin/wyoming-faster-whisper --uri tcp://0.0.0.0:10300
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "==> Reloading systemd and enabling service..."
+systemctl daemon-reload
+systemctl enable wyoming-faster-whisper
